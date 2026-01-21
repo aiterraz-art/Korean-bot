@@ -134,9 +134,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🔤 [Romanization]
         # 📖 [Phonetic-ES]
         # 🇪🇸 [Translation]
+        # Feature B: Blind Training - Hide Korean/Romanization to force listening
         caption_text = (
-            f"🇰🇷 **{analysis.get('reply_text')}**\n"
-            f"🔤 {analysis.get('reply_romanized', '')}\n"
+            f"🇰🇷 ||{analysis.get('reply_text')}||\n"
+            f"🔤 ||{analysis.get('reply_romanized', '')}||\n"
             f"📖 *{analysis.get('reply_phonetic_es', 'No phonetic')}*\n"
             f"🇪🇸 {analysis.get('reply_translation', 'Trad: ???')}"
         )
@@ -226,9 +227,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         temp_files.append(tts_path)
 
         # Send Response - Audio Reply + Caption
+        # Feature B: Blind Training - Hide Korean/Romanization
         caption_text = (
-            f"🇰🇷 **{analysis.get('reply_text')}**\n"
-            f"🔤 {analysis.get('reply_romanized', '')}\n"
+            f"🇰🇷 ||{analysis.get('reply_text')}||\n"
+            f"🔤 ||{analysis.get('reply_romanized', '')}||\n"
             f"📖 *{analysis.get('reply_phonetic_es', 'No phonetic')}*\n"
             f"🇪🇸 {analysis.get('reply_translation', 'Trad: ???')}"
         )
@@ -282,4 +284,14 @@ if __name__ == '__main__':
     # Start the "Keep Alive" web server (for Render Free Tier)
     keep_alive()
     
-    application.run_polling()
+    # Conflict Resolution: Clear any existing webhook before polling
+    # This prevents the 'Conflict: terminated by other getUpdates request' if switching from Cloud to Local
+    # Note: If another instance is ACTIVELY polling, this won't stop it, but it cleans Supabase/Cloud webhook settings.
+    async def post_init(app: ApplicationBuilder):
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted to allow local polling.")
+
+    # We need to rebuild application to attach post_init if we wanted to use it in build() 
+    # but since we already built it, we can just run this logic differently or relies on drop_pending_updates in run_polling if supported.
+    # Actually, simpler way for python-telegram-bot v20+:
+    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
