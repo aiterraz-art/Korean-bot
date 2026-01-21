@@ -12,10 +12,12 @@ app = Flask('')
 def home():
     return "I'm alive! 🤖 K-Voice Coach is running."
 
+import os
+
 def run():
-    # Use port 8080 or whatever the cloud provider expects (Render uses PORT env var, defaults to 10000 usually)
-    # But usually 0.0.0.0 is needed.
-    app.run(host='0.0.0.0', port=8080)
+    # Render assigns a random port in the PORT env var. We must use it.
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run)
