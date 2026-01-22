@@ -1,6 +1,7 @@
 
 import os
 import time
+import asyncio
 import json
 import logging
 import functools
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 
-MODEL_NAME = "gemini-3-flash-preview"  # User requested speed model
+MODEL_NAME = "gemini-3-flash-preview"  # User requested model (Experimental)
 
 # System Prompt mandated by SENSEI LOGIC (Beginner Pivot)
 SYSTEM_PROMPT = """
@@ -128,9 +129,10 @@ class GeminiService:
         )
 
     async def upload_audio(self, mp3_path: str):
-        """Uploads file to Gemini File API."""
+        """Uploads file to Gemini File API (Non-blocking)."""
         logger.info(f"Uploading {mp3_path} to Gemini...")
-        file_ref = genai.upload_file(mp3_path, mime_type="audio/mp3")
+        # Run blocking upload in a separate thread
+        file_ref = await asyncio.to_thread(genai.upload_file, mp3_path, mime_type="audio/mp3")
         logger.info(f"File uploaded: {file_ref.name}")
         return file_ref
 
@@ -158,19 +160,34 @@ class GeminiService:
         # For this statless MVP audio-analysis, we just send the file + prompt.
         
         logger.info("Sending request to Gemini...")
-        response = self.model.generate_content(prompt_parts)
+        # Run blocking generation in a separate thread
+        response = await asyncio.to_thread(self.model.generate_content, prompt_parts)
         
         try:
-            # Clean response if it contains markdown code blocks (even if we asked for JSON)
-            text_response = response.text
+            # Check for valid text part or safety rejection
+            try:
+                text_response = response.text
+            except ValueError:
+                # This happens if the model returns no text (e.g. safety block or empty completion)
+                logger.warning(f"Gemini returned empty response. Finish reason: {response.candidates[0].finish_reason if response.candidates else 'Unknown'}")
+                return {
+                    "transcription": "(Unclear audio)",
+                    "pronunciation_score": 0,
+                    "feedback": "I couldn't hear that clearly. Please try again!",
+                    "reply_text": "다시 말씀해 주세요.",
+                    "reply_romanized": "Dasi malsseumhae juseyo.",
+                    "reply_translation": "Por favor, dilo de nuevo.",
+                    "reply_phonetic_es": "Da-shi mal-seum-hae ju-se-yo"
+                }
+
             if text_response.startswith("```json"):
                 text_response = text_response.replace("```json", "").replace("```", "")
             
             parsed_json = json.loads(text_response)
             logger.info("Successfully parsed Gemini JSON response")
             return parsed_json
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON: {response.text}")
+        except Exception as e:
+            logger.error(f"Failed to parse JSON: {e}")
             # Fallback structure
             return {
                 "transcription": "Error parsing response",
@@ -197,7 +214,8 @@ class GeminiService:
         prompt_parts = [prompt_content]
         
         logger.info("Sending TEXT request to Gemini...")
-        response = self.model.generate_content(prompt_parts)
+        # Run blocking generation in a separate thread
+        response = await asyncio.to_thread(self.model.generate_content, prompt_parts)
         
         try:
             text_response = response.text

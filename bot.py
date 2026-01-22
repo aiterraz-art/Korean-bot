@@ -12,6 +12,8 @@ from services.gemini_service import GeminiService
 from services.db_service import DBService
 from keep_alive import keep_alive
 
+# Start the web server to keep the bot alive (for Render/Railway)
+keep_alive()
 # Validate environment before starting
 validate_env()
 
@@ -27,10 +29,16 @@ audio_service = AudioService()
 gemini_service = GeminiService()
 db_service = DBService()
 
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Simple connection test."""
+    logger.info(f"PING received from {update.effective_user.first_name}")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="🏓 Pong! El bot te escucha.")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends a welcome message and the FIRST LESSON."""
     user = update.effective_user
-    db_service.update_user(user.id, user.username, user.first_name)
+    # Non-blocking DB update
+    asyncio.create_task(asyncio.to_thread(db_service.update_user, user.id, user.username, user.first_name))
     
     # 1. Welcome Text
     welcome_text = (
@@ -78,10 +86,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     chat_id = update.effective_chat.id
     
-    # Update User Profile in DB
-    db_service.update_user(user.id, user.username, user.first_name)
-    
     logger.info(f"Received voice note from {user.first_name} (ID: {user.id})")
+
+    # Update User Profile in DB (Background Task)
+    asyncio.create_task(asyncio.to_thread(db_service.update_user, user.id, user.username, user.first_name))
     
     # Files to cleanup
     temp_files = []
@@ -104,23 +112,24 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 4. Upload to Gemini
         gemini_file = await gemini_service.upload_audio(mp3_path)
 
-        # [DB] Retrieve Context (Deep Memory)
-        previous_context = db_service.get_context(user.id, limit=50)
+        # [DB] Retrieve Context (Deep Memory) - Non-blocking
+        previous_context = await asyncio.to_thread(db_service.get_context, user.id, limit=50)
         logger.info(f"Retrieved {len(previous_context)} context items for user {user.id}")
         
-        # 5. Get Analysis from Gemini
+        # 5. Get Analysis from Gemini (Non-blocking internal)
         # Keep "typing" status alive during AI processing
         await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
         
         analysis = await gemini_service.analyze_audio(gemini_file, history=previous_context)
         
-        # [DB] Save User Interaction
-        db_service.save_interaction(
+        # [DB] Save User Interaction - Non-blocking background
+        asyncio.create_task(asyncio.to_thread(
+            db_service.save_interaction,
             user_id=user.id, 
             role='user', 
-            audio_path=ogg_path, # Ideally we'd store file_id, but path is fine for logs
-            analysis_data=analysis  # Save what the user SAID (transcription)
-        )
+            audio_path=ogg_path, 
+            analysis_data=analysis
+        ))
         
         # 6. Generate TTS for the reply
         reply_text = analysis.get("reply_text", "Could not generate reply.")
@@ -149,15 +158,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=constants.ParseMode.MARKDOWN
         )
 
-        # [DB] Save Model Reply
-        db_service.save_interaction(
+        # [DB] Save Model Reply - Non-blocking
+        asyncio.create_task(asyncio.to_thread(
+            db_service.save_interaction,
             user_id=user.id,
             role='model',
             content_text=reply_text,
-            analysis_data={
-                "feedback": analysis.get("feedback")
-            }
-        )
+            analysis_data={"feedback": analysis.get("feedback")}
+        ))
 
         # 9. Send Response - Step C: Feedback Card
         score = analysis.get("pronunciation_score", "?")
@@ -195,30 +203,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_text = update.message.text
     
-    # Update User Profile in DB
-    db_service.update_user(user.id, user.username, user.first_name)
     logger.info(f"Received TEXT from {user.first_name}: {user_text}")
+
+    # Update User Profile in DB - Non-blocking
+    asyncio.create_task(asyncio.to_thread(db_service.update_user, user.id, user.username, user.first_name))
     
     # Files to cleanup
     temp_files = []
 
     try:
-        # [DB] Retrieve Context (Deep Memory)
-        previous_context = db_service.get_context(user.id, limit=50)
+        # [DB] Retrieve Context (Deep Memory) - Non-blocking
+        previous_context = await asyncio.to_thread(db_service.get_context, user.id, limit=50)
         
         # Keep "typing" status alive during AI processing
         await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
         
-        # CALL GEMINI TEXT ANALYSIS
+        # CALL GEMINI TEXT ANALYSIS (Internally non-blocking now)
         analysis = await gemini_service.analyze_text(user_text, history=previous_context)
         
-        # [DB] Save User Interaction
-        db_service.save_interaction(
+        # [DB] Save User Interaction - Non-blocking
+        asyncio.create_task(asyncio.to_thread(
+            db_service.save_interaction,
             user_id=user.id, 
             role='user', 
-            content_text=user_text, # Save input text
-            analysis_data={"transcription": user_text} # For consistency
-        )
+            content_text=user_text,
+            analysis_data={"transcription": user_text}
+        ))
         
         # Generate TTS for the reply
         reply_text = analysis.get("reply_text", "Could not generate reply.")
@@ -242,13 +252,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=constants.ParseMode.MARKDOWN
         )
 
-        # [DB] Save Model Reply
-        db_service.save_interaction(
+        # [DB] Save Model Reply - Non-blocking
+        asyncio.create_task(asyncio.to_thread(
+            db_service.save_interaction,
             user_id=user.id,
             role='model',
             content_text=reply_text,
             analysis_data={"feedback": analysis.get("feedback")}
-        )
+        ))
 
         # Feedback Card (Simplified for Text)
         feedback_msg = (
@@ -269,13 +280,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         audio_service.cleanup_files(*temp_files)
 
 if __name__ == '__main__':
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    # Conflict Resolution: Clear any existing webhook before polling
+    # This prevents the 'Conflict: terminated by other getUpdates request' if switching from Cloud to Local
+    async def post_init(app: ApplicationBuilder):
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted to allow local polling.")
+
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     
     start_handler = CommandHandler('start', start)
+    ping_handler = CommandHandler('ping', ping)
     voice_handler = MessageHandler(filters.VOICE, handle_voice)
     text_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text)
     
     application.add_handler(start_handler)
+    application.add_handler(ping_handler)
     application.add_handler(voice_handler)
     application.add_handler(text_handler)
     
@@ -284,14 +303,5 @@ if __name__ == '__main__':
     # Start the "Keep Alive" web server (for Render Free Tier)
     keep_alive()
     
-    # Conflict Resolution: Clear any existing webhook before polling
-    # This prevents the 'Conflict: terminated by other getUpdates request' if switching from Cloud to Local
-    # Note: If another instance is ACTIVELY polling, this won't stop it, but it cleans Supabase/Cloud webhook settings.
-    async def post_init(app: ApplicationBuilder):
-        await app.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted to allow local polling.")
-
-    # We need to rebuild application to attach post_init if we wanted to use it in build() 
-    # but since we already built it, we can just run this logic differently or relies on drop_pending_updates in run_polling if supported.
-    # Actually, simpler way for python-telegram-bot v20+:
-    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    # Run polling
+    application.run_polling(allowed_updates=Update.ALL_TYPES)

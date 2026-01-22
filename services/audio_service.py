@@ -1,16 +1,68 @@
-
-import os
 import logging
-from pydub import AudioSegment
 import edge_tts
 import uuid
+import shutil
+import os
+from pydub import AudioSegment
 
-# Explicit Pydub Configuration for Mac Silicon
-# This ensures it finds the binaries even if PATH env is wonky
-AudioSegment.converter = "/opt/homebrew/bin/ffmpeg"
-AudioSegment.ffprobe = "/opt/homebrew/bin/ffprobe"
-
+# Initialize logger first
 logger = logging.getLogger(__name__)
+
+# Explicit Pydub Configuration
+# dynamically find ffmpeg
+def find_ffmpeg():
+    """Finds ffmpeg binary in common locations."""
+    # 1. Try system path
+    path = shutil.which("ffmpeg")
+    if path:
+        return path
+    
+    # 2. Common fallback paths (Mac Silicon, Mac Intel, Linux)
+    common_paths = [
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg"
+    ]
+    
+    for p in common_paths:
+        if os.path.exists(p):
+            return p
+            
+    return None
+
+def find_ffprobe():
+    """Finds ffprobe binary in common locations."""
+    # 1. Try system path
+    path = shutil.which("ffprobe")
+    if path:
+        return path
+        
+    # 2. Common fallback paths
+    common_paths = [
+        "/opt/homebrew/bin/ffprobe",
+        "/usr/local/bin/ffprobe",
+        "/usr/bin/ffprobe"
+    ]
+    
+    for p in common_paths:
+        if os.path.exists(p):
+            return p
+            
+    return None
+
+ffmpeg_path = find_ffmpeg()
+ffprobe_path = find_ffprobe()
+
+if ffmpeg_path:
+    AudioSegment.converter = ffmpeg_path
+    logger.info(f"ffmpeg found at: {ffmpeg_path}")
+else:
+    logger.warning("ffmpeg not found! Audio conversion may fail.")
+
+if ffprobe_path:
+    AudioSegment.ffprobe = ffprobe_path
+else:
+    logger.warning("ffprobe not found!")
 
 class AudioService:
     @staticmethod
@@ -20,10 +72,11 @@ class AudioService:
         Returns the path to the MP3 file.
         """
         try:
-            # Fix for Mac Homebrew path visibility
-            if os.path.exists("/opt/homebrew/bin/ffmpeg"):
-                AudioSegment.converter = "/opt/homebrew/bin/ffmpeg"
-                
+             # Re-verify path just in case, though global config should hold
+            if AudioSegment.converter is None:
+                 if os.path.exists("/opt/homebrew/bin/ffmpeg"):
+                    AudioSegment.converter = "/opt/homebrew/bin/ffmpeg"
+            
             mp3_path = ogg_path.replace(".ogg", ".mp3")
             
             # Load OGG and export as MP3

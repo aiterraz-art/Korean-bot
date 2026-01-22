@@ -9,10 +9,11 @@ def main():
     print("="*50)
     
     # Check if .env exists
+    # Check if .env exists (Optional for local dev, not needed for Cloud if env vars set)
     if not os.path.exists(".env"):
-        print("❌ Error: .env file not found!")
-        print("Please rename .env.example to .env and add your keys.")
-        return
+        print("⚠️ Warning: .env file not found. Assuming environment variables are set manually.")
+    #    print("Please rename .env.example to .env and add your keys.")
+    #    return
 
     # Run the bot
     try:
