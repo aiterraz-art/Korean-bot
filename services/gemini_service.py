@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 
-MODEL_NAME = "gemini-3-flash-preview"  # User requested model (Experimental)
+MODEL_NAME = "gemini-2.5-flash-lite"  # User requested model
 
 # System Prompt mandated by SENSEI LOGIC (Beginner Pivot)
 SYSTEM_PROMPT = """
